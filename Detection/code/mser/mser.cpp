@@ -27,7 +27,7 @@ vector<BigRect> Mser::detect_mser(Mat src, Mat mask, int maxHeight, double delta
 	}
 
 	double focus = Common::getFocus(src);
-	cout << "focus " << focus << endl;
+	//cout << "focus " << focus << endl;
 
 	int kern = (focus) / 3;
 	Size blurSize(kern, kern);

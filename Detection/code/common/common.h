@@ -255,7 +255,7 @@ namespace Common
 	{
 		for (int i = 0; i < src->height; i++)
 		{
-			for (int j = 0; j < src->width; j++)
+			for (int j = 0; j < src->width; j += 3)
 			{
 				unsigned b = src->imageData[i * src->widthStep + j * 3];
 				unsigned g = src->imageData[i * src->widthStep + j * 3 + 1];
@@ -265,8 +265,21 @@ namespace Common
 		}
 		return true;
 	}
+    
+/*    static Mat getMaxChannle(Mat & src)
+    {
+        Mat res(src.rows, src.cols, CV_32UC, Scalar(255));
+        for (i = 0; i < src.rows; i++) {
+            p = src.ptr<uchar>(i);
+            q = res.ptr<uchar>(i)
+            for (int j = 0; j < src.cols; j += 3) {
+                q[j] = max(p[j], p[j + 1], p[j + 2]);
+            }
+        }
+        return res;
+    }
 
-	static Mat getRedChannel(Mat src)
+*/	static Mat getRedChannel(Mat src)
 	{
 		if (src.channels() == 3) {
 			vector<Mat> channels;

@@ -11,7 +11,6 @@ using namespace LF;
 extern "C" 
 {
 	PyObject* textCrop(const char* loc, const char* tem, const char* img );
-        PyObject* test(const char* loc, const char*tem, const char* pathJson, const char* pathImgd);
 }
 
 

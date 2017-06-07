@@ -30,6 +30,7 @@ def tower_loss(scope):
   """
   # Get images and labels for CIFAR-10.
   images, seq_lens, labels, label_lens = cnn_lstm_ctc.distorted_inputs()
+  print(tf.shape(images))
 
   # Build inference Graph.
   logits = cnn_lstm_ctc.inference(images, seq_lens)
@@ -44,23 +45,13 @@ def tower_loss(scope):
   # Calculate the total loss for the current tower.
   total_loss = tf.add_n(losses, name='total_loss')
 
-  # Compute the moving average of all individual losses and the total loss.
-  loss_averages = tf.train.ExponentialMovingAverage(0.9, name='avg')
-  loss_averages_op = loss_averages.apply(losses + [total_loss])
-
   # Attach a scalar summary to all individual losses and the total loss; do the
   # same for the averaged version of the losses.
-  # for l in losses + [total_loss]:
-  #   # Remove 'tower_[0-9]/' from the name in case this is a multi-GPU training
-  #   # session. This helps the clarity of presentation on tensorboard.
-  #   loss_name = re.sub('%s_[0-9]*/' % cnn_lstm_ctc.TOWER_NAME, '', l.op.name)
-  #   # Name each loss as '(raw)' and name the moving average version of the loss
-  #   # as the original loss name.
-  #   tf.scalar_summary(loss_name +' (raw)', l)
-  #   tf.scalar_summary(loss_name, loss_averages.average(l))
+  for l in losses + [total_loss]:
+    # Remove 'tower_[0-9]/' from the name in case this is a multi-GPU training
+    # session. This helps the clarity of presentation on tensorboard.
+    loss_name = re.sub('%s_[0-9]*/' % cnn_lstm_ctc.TOWER_NAME, '', l.op.name)
 
-  with tf.control_dependencies([loss_averages_op]):
-    total_loss = tf.identity(total_loss)
   return total_loss
 
 
@@ -90,7 +81,7 @@ def average_gradients(tower_grads):
       grads.append(expanded_g)
 
     # Average over the 'tower' dimension.
-    grad = tf.concat(0, grads)
+    grad = tf.concat(grads, 0)
     grad = tf.reduce_mean(grad, 0)
 
     # Keep in mind that the Variables are redundant because they are shared
@@ -124,74 +115,70 @@ def train():
                                     staircase=True)
 
     # Create an optimizer that performs gradient descent.
-    opt = tf.train.AdamOptimizer(learning_rate=lr, beta1=FLAGS.beta1, beta2=FLAGS.beta2)
+    # opt = tf.train.AdamOptimizer(learning_rate=lr, beta1=FLAGS.beta1, beta2=FLAGS.beta2)
+    opt = tf.train.GradientDescentOptimizer(lr)
 
     # Calculate the gradients for each model tower.
     tower_grads = []
-    for i in xrange(FLAGS.num_gpus):
-      with tf.device('/gpu:%d' % i):
-        with tf.name_scope('%s_%d' % (cnn_lstm_ctc.TOWER_NAME, i)) as scope:
-          # Calculate the loss for one tower of the CIFAR model. This function
-          # constructs the entire CIFAR model but shares the variables across
-          # all towers.
-          loss = tower_loss(scope)
+    with tf.variable_scope(tf.get_variable_scope()):
+      for i in xrange(FLAGS.num_gpus):
+        with tf.device('/gpu:%d' % i):
+          with tf.name_scope('%s_%d' % (cnn_lstm_ctc.TOWER_NAME, i)) as scope:
+            # Calculate the loss for one tower of the CIFAR model. This function
+            # constructs the entire CIFAR model but shares the variables across
+            # all towers.
+            cur_loss = tower_loss(scope)
 
-          # Reuse variables for the next tower.
-          tf.get_variable_scope().reuse_variables()
+            # Reuse variables for the next tower.
+            tf.get_variable_scope().reuse_variables()
 
-          # Retain the summaries from the final tower.
-          summaries = tf.get_collection(tf.GraphKeys.SUMMARIES, scope)
+            # Retain the summaries from the final tower.
+            summaries = tf.get_collection(tf.GraphKeys.SUMMARIES, scope)
 
-          # Calculate the gradients for the batch of data on this CIFAR tower.
-          grads = opt.compute_gradients(loss)
+            # Calculate the gradients for the batch of data on this CIFAR tower.
+            grads = opt.compute_gradients(cur_loss)
 
-          # Keep track of the gradients across all towers.
-          tower_grads.append(grads)
+            # Keep track of the gradients across all towers.
+            tower_grads.append(grads)
 
     # We must calculate the mean of each gradient. Note that this is the
     # synchronization point across all towers.
     grads = average_gradients(tower_grads)
 
     # Add a summary to track the learning rate.
-    # summaries.append(tf.scalar_summary('learning_rate', lr))
+    summaries.append(tf.summary.scalar('learning_rate', lr))
 
     # Add histograms for gradients.
-    # for grad, var in grads:
-    #   if grad:
-    #     summaries.append(
-    #         tf.histogram_summary(var.op.name + '/gradients', grad))
+    for grad, var in grads:
+      if grad is not None:
+        summaries.append(
+            tf.summary.histogram(var.op.name + '/gradients', grad))
 
     # Apply the gradients to adjust the shared variables.
     apply_gradient_op = opt.apply_gradients(grads, global_step=global_step)
 
     # Add histograms for trainable variables.
     # for var in tf.trainable_variables():
-    #   summaries.append(tf.histogram_summary(var.op.name, var))
+    #   summaries.append(tf.summary.histogram(var.op.name, var))
 
     # Track the moving averages of all trainable variables.
-    variable_averages = tf.train.ExponentialMovingAverage(
-        cnn_lstm_ctc.MOVING_AVERAGE_DECAY, global_step)
+    variable_averages = tf.train.ExponentialMovingAverage(cnn_lstm_ctc.MOVING_AVERAGE_DECAY, global_step,  name='avg')
     variables_averages_op = variable_averages.apply(tf.trainable_variables())
 
     # Group all updates to into a single train op.
     train_op = tf.group(apply_gradient_op, variables_averages_op)
 
     # Create a saver.
-    saver = tf.train.Saver(tf.all_variables())
+    saver = tf.train.Saver(tf.global_variables())
 
     # Build the summary operation from the last tower summaries.
-    summary_op = tf.merge_summary(summaries)
-
-    # Build an initialization operation to run below.
-    init = tf.initialize_all_variables()
+    summary_op = tf.summary.merge(summaries)
 
     # Start running operations on the Graph. allow_soft_placement must be set to
     # True to build towers on GPU, as some of the ops do not have GPU
     # implementations.
-    sess = tf.Session(config=tf.ConfigProto(
-        allow_soft_placement=True,
-        log_device_placement=FLAGS.log_device_placement))
-    sess.run(init)
+    sess = tf.Session(config=tf.ConfigProto(allow_soft_placement=True,log_device_placement=FLAGS.log_device_placement))
+    sess.run(tf.global_variables_initializer())
 
     if FLAGS.restore:
         ckpt = tf.train.latest_checkpoint(FLAGS.checkpoint_dir)
@@ -205,12 +192,16 @@ def train():
     # Start the queue runners.
     tf.train.start_queue_runners(sess=sess)
 
-    summary_writer = tf.train.SummaryWriter(FLAGS.log_dir+'/train',
-                                            graph_def=sess.graph_def)
+    summary_writer = tf.summary.FileWriter(FLAGS.log_dir+'/train', sess.graph)
 
     for step in xrange(FLAGS.max_steps):
       start_time = time.time()
-      _, loss_value = sess.run([train_op, loss])
+      # if step % 100 == 0:
+      #   _, loss_value, summary_str = sess.run([train_op, cur_loss, summary_op])
+      #   summary_writer.add_summary(summary_str, step)
+      # else:
+      _, loss_value = sess.run([train_op, cur_loss])
+
       duration = time.time() - start_time
 
       assert not np.isnan(loss_value), 'Model diverged with loss = NaN'
@@ -225,15 +216,11 @@ def train():
         print (format_str % (datetime.now(), step, loss_value,
                              examples_per_sec, sec_per_batch))
 
-      if step % 100 == 0:
-        summary_str = sess.run(summary_op)
-        summary_writer.add_summary(summary_str, step)
-
       # Save the model checkpoint periodically.
       if step % 1000 == 0 or (step + 1) == FLAGS.max_steps:
         if not os.path.isdir(FLAGS.checkpoint_dir):
             os.mkdir(FLAGS.checkpoint_dir)
-        logger.info('save the checkpoint of{0}',format(step))
+        print('save the checkpoint of{0}'.format(step))
         saver.save(sess,os.path.join(FLAGS.checkpoint_dir,'ocr-model'),global_step=step)
 
 

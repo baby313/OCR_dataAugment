@@ -19,7 +19,6 @@ namespace LF
        ~OCR();
     public:
 	    int textCrop(string strImgPath, vector<int> &vrc);
-	    int testDetectAccuracy(string strdirJson, string strdirImg, vector<double> &vdAl);
     private:
 	    int init(string strLocate, string strTemplate);
     public:

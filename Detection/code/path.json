@@ -1,0 +1,9 @@
+{
+    "so_path" : "/data/OCR/Detection/code/LFocr.so",
+    "locate_path" : "/data/OCR/Detection/locate/title.jpg",
+    "template_path" : "/data/OCR/Detection/template/DriveLicense_0.json",
+    "img_dir" : "/data/img/VehicleLicense/OcrPrpData/",
+    "json_dir" : "/data/img/VehicleLicense/标注结果/20170301_linkface_VehicleLicense_第三步_拉框_liangding/Label/",
+    "img_Result" : "/data/img/VehicleLicense/imgResult/",
+    "img_test" : "/data/img/VehicleLicense/OcrPrpData/3984337_0.jpg"
+}

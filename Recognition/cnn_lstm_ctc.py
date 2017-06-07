@@ -83,7 +83,7 @@ def _variable_on_cpu(name, shape, initializer):
     Variable Tensor
   """
   with tf.device('/cpu:0'):
-    var = tf.get_variable(name, shape, initializer=initializer)
+    var = tf.get_variable(name, shape, initializer=initializer, dtype=tf.float32)
   return var
 
 
@@ -106,7 +106,7 @@ def _variable_with_weight_decay(name, shape, stddev, wd):
   var = _variable_on_cpu(name, shape,
                          tf.truncated_normal_initializer(stddev=stddev))
   if wd:
-    weight_decay = tf.mul(tf.nn.l2_loss(var), wd, name='weight_loss')
+    weight_decay = tf.multiply(tf.nn.l2_loss(var), wd, name='weight_loss')
     tf.add_to_collection('losses', weight_decay)
   return var
 
@@ -149,7 +149,7 @@ def inference(images, seq_lens):
     # CNN model
     with tf.variable_scope('conv1') as scope:
       kernel = _variable_with_weight_decay('weights', shape=[3, 3, 3, 64],
-                                          stddev=1e-4, wd=0.0)
+                                          stddev=1e-4, wd=0.1)
       conv = tf.nn.conv2d(images, kernel, [1, 1, 1, 1], padding='SAME')
       biases = _variable_on_cpu('biases', [64], tf.constant_initializer(0.0))
       bias = tf.nn.bias_add(conv, biases)
@@ -157,27 +157,27 @@ def inference(images, seq_lens):
       _activation_summary(conv1)
 
     # pool1
-    pool1 = tf.nn.max_pool(conv1, ksize=[1, 3, 3, 1], strides=[1, 2, 2, 1],
+    pool1 = tf.nn.max_pool(conv1, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1],
                           padding='SAME', name='pool1')
     # norm1
-    norm1 = tf.nn.lrn(pool1, 4, bias=1.0, alpha=0.001 / 9.0, beta=0.75,
-                    name='norm1')
+    # norm1 = tf.nn.lrn(pool1, 4, bias=1.0, alpha=0.001 / 9.0, beta=0.75,
+    #                 name='norm1')
 
     # conv2
     with tf.variable_scope('conv2') as scope:
       kernel = _variable_with_weight_decay('weights', shape=[3, 3, 64, 128],
-                                          stddev=1e-4, wd=0.0)
-      conv = tf.nn.conv2d(norm1, kernel, [1, 1, 1, 1], padding='SAME')
+                                          stddev=1e-4, wd=0.1)
+      conv = tf.nn.conv2d(pool1, kernel, [1, 1, 1, 1], padding='SAME')
       biases = _variable_on_cpu('biases', [128], tf.constant_initializer(0.1))
       bias = tf.nn.bias_add(conv, biases)
       conv2 = tf.nn.relu(bias, name=scope.name)
       _activation_summary(conv2)
 
     # norm2
-    norm2 = tf.nn.lrn(conv2, 4, bias=1.0, alpha=0.001 / 9.0, beta=0.75,
-                      name='norm2')
+    # norm2 = tf.nn.lrn(conv2, 4, bias=1.0, alpha=0.001 / 9.0, beta=0.75,
+    #                   name='norm2')
     # pool2
-    pool2 = tf.nn.max_pool(norm2, ksize=[1, 3, 3, 1],
+    pool2 = tf.nn.max_pool(conv2, ksize=[1, 2, 2, 1],
                          strides=[1, 2, 2, 1], padding='SAME', name='pool2')
 
     shape = tf.shape(pool2)
@@ -187,39 +187,37 @@ def inference(images, seq_lens):
     conv_out = tf.reshape(pool2, [batch_s, -1, NUM_FEATURES * 32])
 
     # bi-lstm
-    stack = tf.contrib.rnn.MultiRNNCell([tf.contrib.rnn.LSTMCell(FLAGS.num_hidden,state_is_tuple=True) for _ in range(FLAGS.num_layers)] , state_is_tuple=True)
+    with tf.variable_scope('forward'):
+      lstm_fw_cell = tf.contrib.rnn.BasicLSTMCell(FLAGS.num_hidden, reuse=tf.get_variable_scope().reuse)
+    with tf.variable_scope('backward'):
+      lstm_bw_cell = tf.contrib.rnn.BasicLSTMCell(FLAGS.num_hidden, reuse=tf.get_variable_scope().reuse)  
+
+    stack = tf.contrib.rnn.MultiRNNCell([lstm_fw_cell, lstm_bw_cell], state_is_tuple=True)
+      
+    # with tf.variable_scope('cell2') as scope:
+    #   cell2 = tf.contrib.rnn.LSTMCell(FLAGS.num_hidden,state_is_tuple=True, reuse=True)
+
     
-    # The second output is the last state and we will no use that
+    # # The second output is the last state and we will no use that
     outputs, _ = tf.nn.dynamic_rnn(stack, conv_out, seq_lens, dtype=tf.float32)
-    
     # Reshaping to apply the same weights over the timesteps
     outputs = tf.reshape(outputs, [-1, FLAGS.num_hidden])
     
-    # Truncated normal with mean 0 and stdev=0.1
-    # Tip: Try another initialization
-    # see https://www.tensorflow.org/versions/r0.9/api_docs/python/contrib.layers.html#initializers
-    W = tf.Variable(tf.truncated_normal([FLAGS.num_hidden,
-                                        NUM_CLASSES],
-                                        stddev=0.1,dtype=tf.float32),name='W')
-    # Zero initialization
-    # Tip: Is tf.zeros_initializer the same?
-    b = tf.Variable(tf.constant(0., dtype = tf.float32,shape=[NUM_CLASSES],name='b'))
+    with tf.variable_scope('fc') as scope:
+      W = _variable_with_weight_decay('weights', shape=[FLAGS.num_hidden, NUM_CLASSES],stddev=1e-4, wd=0.1)
+      b = _variable_on_cpu('biases', [NUM_CLASSES], tf.constant_initializer(0.1))
+      logits = tf.matmul(outputs, W) + b
+      logits = tf.reshape(logits, [batch_s, -1, NUM_CLASSES])
+      # Time major
+      logits = tf.transpose(logits, (1, 0, 2))
+      # _activation_summary(logits)
 
-    # Doing the affine projection
-    logits = tf.matmul(outputs, W) + b
-
-    # Reshaping back to the original shape
-    logits = tf.reshape(logits, [batch_s, -1, NUM_CLASSES])
-
-    # Time major
-    logits = tf.transpose(logits, (1, 0, 2))
     return logits
 
 def loss(logits, seq_lens, labels, label_lens):
     loss = warpctc_tensorflow.ctc(activations=logits,flat_labels=labels,label_lengths=label_lens,input_lengths=seq_lens)
     cost = tf.reduce_mean(loss)
     tf.add_to_collection('losses', cost)
-
     return tf.add_n(tf.get_collection('losses'), name='total_loss')
 
 def _add_loss_summaries(total_loss):

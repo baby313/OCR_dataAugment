@@ -78,18 +78,18 @@ tf.app.flags.DEFINE_string('train_directory', '/Users/lairf/AI-projects/ocr/Data
                            'Training data directory')
 tf.app.flags.DEFINE_string('validation_directory', '/Users/lairf/AI-projects/ocr/Data/address_train/',
                            'Validation data directory')
-tf.app.flags.DEFINE_string('output_directory', '/Users/lairf/AI-projects/OCR/Data/address_train_tfrecord/',
-                           'Output data directory')
-
-# tf.app.flags.DEFINE_string('output_directory', '/data/linkface/OcrData/tfrecords/',
+# tf.app.flags.DEFINE_string('output_directory', '/Users/lairf/AI-projects/OCR/Data/address_train_tfrecord/',
 #                            'Output data directory')
 
-tf.app.flags.DEFINE_integer('train_shards', 1,
+tf.app.flags.DEFINE_string('output_directory', '/data/linkface/OcrData/tfrecords/',
+                           'Output data directory')
+
+tf.app.flags.DEFINE_integer('train_shards', 8,
                             'Number of shards in training TFRecord files.')
-tf.app.flags.DEFINE_integer('validation_shards', 1,
+tf.app.flags.DEFINE_integer('validation_shards', 8,
                             'Number of shards in validation TFRecord files.')
 
-tf.app.flags.DEFINE_integer('num_threads', 1,
+tf.app.flags.DEFINE_integer('num_threads', 8,
                             'Number of threads to preprocess the images.')
 
 
@@ -284,11 +284,14 @@ def _process_image_files_batch(coder, thread_index, ranges, name, filenames,
         print('SKIPPED: Unexpected eror while decoding %s.' % filename)
         continue
 
-      example = _convert_to_example(filename, image_buffer, label,
-                                    text, height, width)
-      writer.write(example.SerializeToString())
-      shard_counter += 1
-      counter += 1
+      if(width < 500):
+        example = _convert_to_example(filename, image_buffer, label,
+                                      text, height, width)
+        writer.write(example.SerializeToString())
+        shard_counter += 1
+        counter += 1
+      else:
+        print("Too width: {0}".format(width))
 
       if not counter % 1000:
         print('%s [thread %d]: Processed %d of %d images in thread batch.' %
@@ -431,14 +434,14 @@ def main(unused_argv):
   print('Saving results to %s' % FLAGS.output_directory)
 
   # Run it!
-  _process_dataset('validation', FLAGS.validation_directory,
-                   FLAGS.validation_shards)
+  # _process_dataset('validation', FLAGS.validation_directory,
+  #                  FLAGS.validation_shards)
 #   _process_dataset('train', FLAGS.train_directory,
 #                    FLAGS.train_shards)
 
-#   _process_dataset('train_real', '/data/linkface/OcrData/OcrTrainData/', 8)
-#   _process_dataset('train_real_weak', '/data/linkface/OcrData/OcrTrainDataElse/', 8)
-    # _process_dataset('test_real', '/data/linkface/OcrData/OcrTestData_s/', 1)
+  _process_dataset('train_real', '/data/linkface/OcrData/OcrTrainData/', 8)
+  _process_dataset('train_real_weak', '/data/linkface/OcrData/OcrTrainDataElse/', 8)
+  _process_dataset('test_real', '/data/linkface/OcrData/OcrTestData_s/', 1)
 #   _process_dataset('train_fake', '/data/linkface/OcrNewFakeData/regionImage/', 16)
 
 if __name__ == '__main__':

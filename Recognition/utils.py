@@ -15,19 +15,19 @@ print sys.getdefaultencoding()
 
 num_features=28
 image_height=28
-max_width = 360
+max_width = 560
 SPACE_INDEX=0
 SPACE_TOKEN=''
 
 maxPrintLen = 10
 tf.app.flags.DEFINE_boolean('restore', True, 'whether to restore from the latest checkpoint')
-tf.app.flags.DEFINE_string('checkpoint_dir', './checkpoint_read_one_time/', 'the checkpoint dir')
-tf.app.flags.DEFINE_float('initial_learning_rate', 1e-3, 'inital lr')
+tf.app.flags.DEFINE_string('checkpoint_dir', './checkpoint/', 'the checkpoint dir')
+tf.app.flags.DEFINE_float('initial_learning_rate', 1e-5, 'inital lr')
 
 tf.app.flags.DEFINE_integer('num_layers', 2, 'number of layer')
 tf.app.flags.DEFINE_integer('num_hidden', 400, 'number of hidden')
 tf.app.flags.DEFINE_integer('num_epochs', 10000, 'maximum epochs')
-tf.app.flags.DEFINE_integer('batch_size', 64, 'the batch_size')
+tf.app.flags.DEFINE_integer('batch_size', 128, 'the batch_size')
 tf.app.flags.DEFINE_integer('num_preprocess_threads', 4, 'number of preprocess threads')
 tf.app.flags.DEFINE_integer('save_steps', 1000, 'the step to save checkpoint')
 tf.app.flags.DEFINE_integer('validation_steps', 10000, 'the step to validation')
@@ -67,6 +67,7 @@ def loadDict(dictPath):
 
 encode_maps[SPACE_TOKEN]=SPACE_INDEX
 decode_maps[SPACE_INDEX]=SPACE_TOKEN
+# loadDict("../Dicts/DigitChars.txt")
 loadDict("../Dicts/Chars.txt")
 loadDict("../Dicts/GB2312.txt")
 NUM_CLASSES = len(encode_maps)
@@ -108,7 +109,6 @@ class DataIterator:
         self.image_names = []
         self.images = []
         self.labels= []
-        self.lens = []
 
         for data_dir in data_dirs:
             in_path = data_dir +  "*.jpg"
@@ -117,51 +117,33 @@ class DataIterator:
                 label_file = img_file[:-3] + "txt"
                 # print(label_file)
                 if os.path.exists(label_file):
-                    self.image_names.append(img_file)
                     im = cv2.imread(img_file).astype(np.float32)/255.
                     
-                    # resize to same height(image_height=28), different width will consume time on padding
-                    image_width = im.shape[0] * im.shape[1] / image_height
-                    im = cv2.resize(im,(image_width, image_height))
+                    # # resize to same height(image_height=28), different width will consume time on padding
+                    # image_width = im.shape[0] * im.shape[1] / image_height
+                    # im = cv2.resize(im,(image_width, image_height))
 
-                    # tensorflow must fix size image in batch
-                    # shape =  im.shape
-                    # height, width = shape[0], shape[1]
-                    # if width >= max_width:
-                    #     im = cv2.resize(im,(max_width, image_height))
-                    # else:
-                    #     w = max_width - width
-                    #     h = height - image_height
-                    #     im = cv2.copyMakeBorder(im, 0, h, 0, w, cv2.BORDER_CONSTANT, (0,0,0))
-
-                    # swap x, y;  each row as feature sequence which inputs in bi-lstm
-                    im = im.swapaxes(0,1)
-                    self.images.append(im)
-
-                    # after pooling, the feature length or the height of the image is resize to height/4
-                    # self.lens.append(width/4)
+                    # # swap x, y;  each row as feature sequence which inputs in bi-lstm
+                    # im = im.swapaxes(0,1)
+                    # self.images.append(im)
 
                     # read labels
-                    with open(label_file) as file:
-                        code = file.read().decode("utf-8").strip()
-                        # print(code)
-                        # print(len(code))
-                        # label = [SPACE_INDEX if code == SPACE_TOKEN else encode_maps[c] for c in list(code)]
-                        label = []
-                        if code == SPACE_TOKEN:
-                            label = [SPACE_INDEX]
-                        else:
-                            for i in range(len(code)):
-                                if code[i] in encode_maps:
-                                    label.append(encode_maps[code[i]])
-                                else:
-                                    label.append(SPACE_INDEX)
-                                    print(code[i])
+                    if im.shape[0] <= max_width and im.shape[0] > 10:
+                        with open(label_file) as file:
+                            code = file.read().decode("utf-8").strip().upper()
+                            label = []
+                            if code == SPACE_TOKEN:
+                                label = [SPACE_INDEX]
+                            else:
+                                for i in range(len(code)):
+                                    if code[i] in encode_maps:
+                                        label.append(encode_maps[code[i]])
+                                    else:
+                                        label.append(SPACE_INDEX)
+                                        print(code[i])
 
-                        # print(label)
-                        self.labels.append(label)
-                        #print(label_file,' ',code)
-            #random.shuffle(self.image_names)
+                            self.labels.append(label)
+                            self.image_names.append(img_file)
 
     @property
     def size(self):
@@ -174,14 +156,11 @@ class DataIterator:
         return labels
 
     #@staticmethod
-    #def data_augmentation(images):
-    #    if FLAGS.random_flip_up_down:
-    #        images = tf.image.random_flip_up_down(images)
-    #    if FLAGS.random_brightness:
-    #        images = tf.image.random_brightness(images, max_delta=0.3)
-    #    if FLAGS.random_contrast:
-    #        images = tf.image.random_contrast(images, 0.8, 1.2)
-    #    return images
+    def data_augmentation(images):
+        images = tf.image.random_brightness(images, max_delta=2.5)
+        images = tf.image.random_contrast(images,lower=0.8, upper=1.2)
+        images = tf.image.random_saturation(images,lower=0.5, upper=1.5)
+        return images
 
     def get_input_lens(self,sequences):
         lengths = np.asarray([len(s) for s in sequences], dtype=np.int64)
@@ -209,19 +188,39 @@ class DataIterator:
 
     def input_index_generate_batch_warp(self,index=None):
         if index:
-            image_batch=[self.images[i] for i in index]
+            # image_batch=[self.images[i] for i in index]
+            image_file_batch=[self.image_names[i] for i in index]
             label_batch=[self.labels[i] for i in index]
         else:
             # get the whole data as input
-            image_batch=self.images
+            # image_batch=self.images
+            image_file_batch = self.image_names
             label_batch=self.labels
-        image_batch=np.array(image_batch)
+
+        images = []
+        for img_file in image_file_batch:
+            im = cv2.imread(img_file).astype(np.float32)/255.
+                    
+            # resize to same height(image_height=28), different width will consume time on padding
+            image_width = im.shape[0] * im.shape[1] / image_height
+            im = cv2.resize(im,(image_width, image_height))
+            # swap x, y;  each row as feature sequence which inputs in bi-lstm
+            im = im.swapaxes(0,1)
+            images.append(im)
+
+        image_batch=np.asarray(images)
         #print(image_batch.shape)
         batch_inputs, batch_seq_len = pad_input_sequences(image_batch)
-        # batch_inputs,batch_seq_len = self.get_input_lens(image_batch)
+        # data = []
+        # for img in batch_inputs:
+        #     img = tf.image.random_brightness(img, max_delta=1.5)
+        #     img = tf.image.random_contrast(img,lower=0.8, upper=1.2)
+        #     img = tf.image.random_saturation(img,lower=0.5, upper=1.5)
+        #     data.append(img)
+        # data = np.asarray(data)
+
         batch_labels,batch_labels_len = get_label_and_lens(label_batch)
-        #sparse_labels = sparse_tuple_from_label(label_batch)
-        return batch_inputs,batch_seq_len/4, batch_labels,batch_labels_len
+        return batch_inputs, batch_seq_len/4, batch_labels,batch_labels_len, label_batch
 
 def get_label_and_lens(sequences,dtype=np.int32):
     '''
@@ -240,22 +239,6 @@ def get_label_and_lens(sequences,dtype=np.int32):
     flat_labels = np.asarray(flat_labels, dtype=dtype)
     labels_len = np.asarray(labels_len, dtype=dtype)
     return flat_labels,labels_len
-
-    def input_index_generate_batch_warp(self,index=None):
-        if index:
-            image_batch=[self.images[i] for i in index]
-            label_batch=[self.labels[i] for i in index]
-        else:
-            # get the whole data as input
-            image_batch=self.images
-            label_batch=self.labels
-        image_batch=np.array(image_batch)
-        #print(image_batch.shape)
-        batch_inputs, batch_seq_len = pad_input_sequences(image_batch)
-        # batch_inputs,batch_seq_len = self.get_input_lens(image_batch)
-        batch_labels,batch_labels_len = get_label_and_lens(label_batch)
-        #sparse_labels = sparse_tuple_from_label(label_batch)
-        return batch_inputs,batch_seq_len/4, batch_labels,batch_labels_len
 
 def get_label_and_lens(sequences,dtype=np.int32):
     '''
@@ -288,7 +271,7 @@ def accuracy_calculation(original_seq,decoded_seq,ignore_value=-1,isPrint = True
         if origin_label == decoded_label: count+=1
     return count*1.0/len(original_seq)
 
-def accuracy_calculation2(original_seq,decoded_seq,ignore_value=-1,isPrint = True):
+def accuracy_calculation2(original_seq, decoded_seq,ignore_value=-1,isPrint = True):
     if  len(original_seq)!=len(decoded_seq):
         print('original lengths is different from the decoded_seq,please check again')
         return 0
@@ -300,6 +283,9 @@ def accuracy_calculation2(original_seq,decoded_seq,ignore_value=-1,isPrint = Tru
 
     for i,origin_label in enumerate(original_seq):
         decoded_label  = [j for j in decoded_seq[i] if j!=ignore_value]
+        if isPrint and i < maxPrintLen:
+            print('seq {0:4d}: origin: {1}'.format(i, origin_label))
+            print('seq {0:4d}: decoded: {1}'.format(i, decoded_label))
         distance = editdistance.eval(origin_label, decoded_label)
         total_chars += len(origin_label)
         char_hit_count += max(len(origin_label) - distance, 0)
@@ -353,6 +339,8 @@ def pad_input_sequences(sequences, maxlen=None, dtype=np.float32,
     nb_samples = len(sequences)
     if maxlen is None:
         maxlen = np.max(lengths)
+    # maxlen = max_width
+    # lengths = np.asarray([ maxlen for s in sequences], dtype=np.int64)
 
     # take the sample shape from the first non empty sequence
     # checking for consistency in the main loop below.

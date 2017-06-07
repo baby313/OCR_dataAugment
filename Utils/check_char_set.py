@@ -1,10 +1,7 @@
 # coding=utf-8
-<<<<<<< HEAD
 # 检查测试字符集对姓名和地址样本的覆盖率
 # 70万地址 50万姓名，GB2312对地址的覆盖率超过99.9%， 对姓名覆盖率超过99.8%
 
-=======
->>>>>>> multi-gpu
 import os,sys
 import glob
 reload(sys) 

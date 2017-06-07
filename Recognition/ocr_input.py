@@ -19,7 +19,7 @@ sys.setdefaultencoding("utf8")
 IMAGE_HEIGHT = 28
 IMAGE_WIDTH = 28
 NUM_FEATURES = 28
-MAX_IMAGE_HEIGHT = 500
+MAX_IMAGE_HEIGHT = 800
 MAX_LABEL_LENTH = 60
 
 num_examples = utils.FLAGS.num_examples
@@ -133,21 +133,25 @@ def _generate_image_and_label_batch(image, label, label_length, min_queue_exampl
   # read 'batch_size' images + labels from the example queue.
 
   image, height = pad_image(image)
-  image = tf.reshape(image, [MAX_IMAGE_HEIGHT, IMAGE_WIDTH, 3])
+  zero_pads = tf.zeros([MAX_LABEL_LENTH - tf.shape(label)[0]], dtype=label.dtype)
+  label = tf.concat([label, zero_pads], 0)
+  label = tf.reshape(label, [MAX_LABEL_LENTH])
+  # image = tf.reshape(image, [MAX_IMAGE_HEIGHT, IMAGE_WIDTH, 3])
   
   # label = pad_zeros(label, label_length)
   # label = tf.reshape(label, [MAX_LABEL_LENTH])
-  label = tf.zeros([MAX_LABEL_LENTH], tf.int32)
+  # label = tf.zeros([MAX_LABEL_LENTH], tf.int32)
 
   images, image_heights, labels, label_lengths = tf.train.shuffle_batch(
-      [image, height, label, label_length],
+      [image, height, label, MAX_LABEL_LENTH],
       batch_size=batch_size,
       num_threads=num_preprocess_threads,
       capacity=min_queue_examples + 3 * batch_size,
       min_after_dequeue=min_queue_examples)
 
   # labels = trim_zeros(labels)
-  flat_labels = tf.concat(0, labels)
+  # flat_labels = tf.concat(0, labels)
+  flat_labels = tf.reshape(labels, [-1])
   # images, image_heights = pad_images(images)
 
   # labels = tf.reshape(labels, [batch_size])
@@ -161,7 +165,7 @@ def _generate_image_and_label_batch(image, label, label_length, min_queue_exampl
   # Display the training images in the visualizer.
   # tf.image_summary('images', images)
 
-  return images, image_heights/4, flat_labels, label_lengths
+  return images, tf.cast(image_heights/4, tf.int32), flat_labels, label_lengths
 
 
 def read_and_decode(filename_queue):
@@ -200,7 +204,7 @@ def read_and_decode(filename_queue):
     return image, text, label, label_length
 
 def distorted_inputs(data_dir, batch_size): 
-  files = tf.train.match_filenames_once(data_dir)
+  files = [ file for file in glob.glob(data_dir)]
   filename_queue = tf.train.string_input_producer(files, shuffle=True)
   image, text, label, label_length = read_and_decode(filename_queue)
   
@@ -246,7 +250,7 @@ def inputs(data_dir, batch_size):
     labels: Labels. 1D tensor of [batch_size] size.
   """
   
-  ifiles = tf.train.match_filenames_once(data_dirs)
+  files = [ file for file in glob.glob(data_dir)]
   filename_queue = tf.train.string_input_producer(files, shuffle=True)
   image, text, label, label_length = read_and_decode(filename_queue)
 
